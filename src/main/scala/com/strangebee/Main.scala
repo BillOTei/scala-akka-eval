@@ -67,11 +67,8 @@ object Main extends App {
         for {
           doc <- parseDocument(line)
           exists <- documentExists(doc.id)
-          if exists
-        } yield doc
-      }
-      .mapAsync(4) { doc =>
-        createDocument(doc)
+          newOrExistingDoc <- if (exists) Future.successful(doc) else createDocument(doc)
+        } yield newOrExistingDoc
       }
       .toMat(Sink.seq)(Keep.right)
 

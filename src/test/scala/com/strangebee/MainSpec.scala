@@ -38,6 +38,13 @@ class MainSpec(_system: ActorSystem)
     }
   }
 
+  "createDocument" should {
+    "successfully create a document" in {
+      val doc = Document(666, "Van Helsing", "beast")
+      Await.result(Main.createDocument(doc), 1.minute) shouldEqual doc
+    }
+  }
+
   "documentExists" should {
     "return true if document exists" in {
       Await.result(Main.documentExists(2), 1.minute) shouldBe true
@@ -45,6 +52,7 @@ class MainSpec(_system: ActorSystem)
 
     "return false if document doesn't exist" in {
       Await.result(Main.documentExists(1), 1.minute) shouldBe false
+      Await.result(Main.documentExists(3), 1.minute) shouldBe false
     }
   }
 
@@ -62,13 +70,20 @@ class MainSpec(_system: ActorSystem)
   }
 
   "parseAndCreateIfNotExists" should {
-    "parse and create document if exists" in {
+    "parse and create a document if it does not exist" in {
       val source = Source(List(
         "1:a:data-a",
         "2:b:data-b",
         "3:c:data-c",
         "4:d:data-d"))
-      Await.result(source.runWith(Main.parseAndCreateIfNotExists), 1.minute).size shouldBe 2
+      val probe = TestProbe()(system)
+      source.runWith(Main.parseAndCreateIfNotExists).pipeTo(probe.ref)
+      probe.expectMsg(3.seconds, Vector(
+        Document(1, "a", "data-a"),
+        Document(2, "b", "data-b"),
+        Document(3, "c", "data-c"),
+        Document(4, "d", "data-d")
+      ))
     }
   }
 }
