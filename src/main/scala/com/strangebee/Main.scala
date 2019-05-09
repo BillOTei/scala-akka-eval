@@ -8,7 +8,7 @@ import scala.concurrent.{ Await, Future }
 
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ FileIO, Flow, Framing, Keep, Sink, Source }
-import akka.stream.{ ActorMaterializer, IOResult }
+import akka.stream.{ ActorMaterializer, IOResult, Supervision, ActorAttributes }
 import akka.util.ByteString
 
 case class Document(id: Int, name: String, content: String)
@@ -57,19 +57,41 @@ object Main extends App {
   }
 
   /**
+    * Stream decider that makes sure exceptions are logged and carries on
+    */
+  val decider: Supervision.Decider = {
+    // Handling creation failed should go here
+
+    case e: IllegalArgumentException =>
+      println(s"Error parsing doc: ${e.getMessage}")
+      Supervision.Resume
+    case e =>
+      println(s"Unhandled exception: ${e.getMessage}")
+      Supervision.Stop
+  }
+
+  /**
     * A stream sink that parse document, check if it already exists and create it doesn't
     *
     * @return a stream sink
     */
   def parseAndCreateIfNotExists: Sink[String, Future[Seq[Document]]] =
     Flow[String]
-      .mapAsync(4) { line =>
-        for {
-          doc <- parseDocument(line)
-          exists <- documentExists(doc.id)
-          newOrExistingDoc <- if (exists) Future.successful(doc) else createDocument(doc)
-        } yield newOrExistingDoc
-      }
+      .mapAsync(4)(l => {
+        parseDocument(l).recoverWith { case e =>
+          println(s"parsing error ${e.getMessage}")
+          Future.successful(Document(0, "parsing error", e.getMessage))
+        }
+      })
+      .mapAsync(4)(d => documentExists(d.id).map(exists => (exists, d)))
+      .filterNot(_._1)
+      .map(_._2)
+      .mapAsync(4)(d => {
+        createDocument(d).recoverWith { case e =>
+          println(s"creation error ${e.getMessage}")
+          Future.successful(Document(0, "creation error", e.getMessage))
+        }
+      })
       .toMat(Sink.seq)(Keep.right)
 
   /**
