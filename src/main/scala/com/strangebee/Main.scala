@@ -9,11 +9,32 @@ import scala.concurrent.{ Await, Future }
 import akka.actor.ActorSystem
 import akka.stream.scaladsl.{ FileIO, Flow, Framing, Keep, Sink, Source }
 import akka.stream.{ ActorMaterializer, IOResult, Supervision, ActorAttributes }
+import ActorAttributes.supervisionStrategy
 import akka.util.ByteString
 
 case class Document(id: Int, name: String, content: String)
+final case class CreateDocumentException(private val message: String = "", private val cause: Throwable = None.orNull) extends Exception(message, cause)
 
-object Main extends App {
+trait CustomDecider {
+  /**
+    * Stream decider that makes sure exceptions are logged and carries on
+    */
+  val decider: Supervision.Decider = {
+    case e: IllegalArgumentException =>
+      println(s"Error parsing doc: ${e.getMessage}")
+      Supervision.Resume
+
+    case e: CreateDocumentException =>
+      println(s"Error creating doc: ${e.getMessage}")
+      Supervision.Resume
+
+    case e =>
+      println(s"Unhandled exception: ${e.getMessage}")
+      Supervision.Stop
+  }
+}
+
+object Main extends App with CustomDecider {
   /**
     * Check if the document exists in the remote system
     *
@@ -53,21 +74,13 @@ object Main extends App {
     // The real method uses external API call
     // For test, it always succeeds
     println(s"createDocument($document)")
-    Future.successful(document)
-  }
 
-  /**
-    * Stream decider that makes sure exceptions are logged and carries on
-    */
-  val decider: Supervision.Decider = {
-    // Handling creation failed should go here
-
-    case e: IllegalArgumentException =>
-      println(s"Error parsing doc: ${e.getMessage}")
-      Supervision.Resume
-    case e =>
-      println(s"Unhandled exception: ${e.getMessage}")
-      Supervision.Stop
+    // Testing purpose like the whole method
+//    if (document.id % 2 != 0) {
+//      Future.failed(new CreateDocumentException(s"doc creation ${document.id} failed"))
+//    } else {
+      Future.successful(document)
+//    }
   }
 
   /**
@@ -77,21 +90,12 @@ object Main extends App {
     */
   def parseAndCreateIfNotExists: Sink[String, Future[Seq[Document]]] =
     Flow[String]
-      .mapAsync(4)(l => {
-        parseDocument(l).recoverWith { case e =>
-          println(s"parsing error ${e.getMessage}")
-          Future.successful(Document(0, "parsing error", e.getMessage))
-        }
-      })
+      .mapAsync(4)(parseDocument)
       .mapAsync(4)(d => documentExists(d.id).map(exists => (exists, d)))
       .filterNot(_._1)
       .map(_._2)
-      .mapAsync(4)(d => {
-        createDocument(d).recoverWith { case e =>
-          println(s"creation error ${e.getMessage}")
-          Future.successful(Document(0, "creation error", e.getMessage))
-        }
-      })
+      .mapAsync(4)(createDocument)
+      .withAttributes(supervisionStrategy(decider))
       .toMat(Sink.seq)(Keep.right)
 
   /**

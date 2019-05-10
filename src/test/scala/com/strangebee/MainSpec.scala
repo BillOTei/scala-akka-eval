@@ -76,18 +76,18 @@ class MainSpec(_system: ActorSystem)
         "2:b:data-b",
         "3:c:data-c",
         "4:d:data-d"))
-      val probe = TestProbe()(system)
-      source.runWith(Main.parseAndCreateIfNotExists).pipeTo(probe.ref)
-      probe.expectMsg(3.seconds, Vector(
+      val f = source.runWith(Main.parseAndCreateIfNotExists)
+      val result = Await.result(f, 3.seconds)
+      result shouldEqual Vector(
         Document(1, "a", "data-a"),
         Document(3, "c", "data-c")
-      ))
+      )
     }
     "fail parsing invalid document and create valid one if it does not exist" in {
       val source = Source(List(
         "1:a:data-a",
         "2:b:data-b",
-        "3_c:data-c",
+        "3-c:data-c",
         "4:d:data-d"))
       val probe = TestProbe()(system)
       source.runWith(Main.parseAndCreateIfNotExists).pipeTo(probe.ref)
